@@ -41,7 +41,7 @@ func convertHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	url := fmt.Sprintf("http://api.exchangeratesapi.io/v1/latest?access_key=%s", apiKey)
+	url := fmt.Sprintf("https://v6.exchangerate-api.com/v6/%s/latest/USD", apiKey)
 	res, err := http.Get(url)
 	if err != nil {
 		fmt.Println("Error making API request:", err)
