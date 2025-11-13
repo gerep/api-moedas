@@ -32,6 +32,13 @@ func loadEnv() {
 	}
 }
 
+func validateApiKey(apiKey string) error {
+	if apiKey == "" {
+		return fmt.Errorf("API_KEY_EXCHANGE environment variable not set")
+	}
+	return nil
+}
+
 func convertHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -39,8 +46,8 @@ func convertHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	apiKey := os.Getenv("API_KEY_EXCHANGE")
-	if apiKey == "" {
-		http.Error(w, "API key not configured", http.StatusInternalServerError)
+	if err := validateApiKey(apiKey); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -102,15 +109,74 @@ func convertHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+func ratesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	apiKey := os.Getenv("API_KEY_EXCHANGE")
+	if err := validateApiKey(apiKey); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	query := r.URL.Query()
+	base := strings.ToUpper(query.Get("base"))
+
+	if base == "" {
+		http.Error(w, "Missing required parameter: base", http.StatusBadRequest)
+		return
+	}
+
+	re := regexp.MustCompile("^[A-Z]+$")
+	if !re.MatchString(base) {
+		http.Error(w, "Currency codes must contain only alphabetic letters (no number or symbols)", http.StatusBadRequest)
+		return
+	}
+
+	url := fmt.Sprintf("https://v6.exchangerate-api.com/v6/%s/latest/%s", apiKey, base)
+	res, err := http.Get(url)
+	if err != nil {
+		http.Error(w, "Error making API request", http.StatusInternalServerError)
+		return
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		http.Error(w, fmt.Sprintf("External API error: %s", res.Status), http.StatusInternalServerError)
+		return
+	}
+	var apiResponse struct {
+		Rates map[string]float64 `json:"conversion_rates"`
+	}
+
+	if err = json.NewDecoder(res.Body).Decode(&apiResponse); err != nil {
+		http.Error(w, "Error parsing API response", http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{"base": base, "rates": apiResponse.Rates}
+	w.Header().Set("Content-Type", "application/json")
+	jsonData, err := json.MarshalIndent(response, "", "  ")
+	if err != nil {
+		http.Error(w, "Error formatting JSON response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Write(jsonData)
+}
+
 func main() {
 	loadEnv()
 
 	apiKey := os.Getenv("API_KEY_EXCHANGE")
-	if apiKey == "" {
-		fmt.Println("API_KEY_EXCHANGE environment variable not set")
+	if err := validateApiKey(apiKey); err != nil {
+		fmt.Println(err)
 		return
 	}
 	http.HandleFunc("/convert", convertHandler)
+	http.HandleFunc("/rates", ratesHandler)
 
 	port := os.Getenv("PORT")
 	if port == "" {
