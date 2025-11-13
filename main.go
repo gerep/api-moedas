@@ -14,15 +14,6 @@ import (
 
 var apiKey string
 
-func init() {
-	loadEnv()
-	apiKey = os.Getenv("API_KEY_EXCHANGE")
-	if err := validateApiKey(apiKey); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-}
-
 func loadEnv() {
 	file, err := os.Open(".env")
 	if err != nil {
@@ -42,13 +33,6 @@ func loadEnv() {
 			os.Setenv(parts[0], parts[1])
 		}
 	}
-}
-
-func validateApiKey(apiKey string) error {
-	if apiKey == "" {
-		return fmt.Errorf("API_KEY_EXCHANGE environment variable not set")
-	}
-	return nil
 }
 
 func checkCurrencyFormat(s string) bool {
@@ -222,6 +206,12 @@ func ratesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	loadEnv()
+
+	apiKey = os.Getenv("API_KEY_EXCHANGE")
+	if apiKey == "" {
+		fmt.Println("API_KEY_EXCHANGE environment variable not set")
+	}
 
 	http.HandleFunc("/convert", convertHandler)
 	http.HandleFunc("/rates", ratesHandler)
