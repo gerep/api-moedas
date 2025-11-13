@@ -11,6 +11,17 @@ import (
 	"strings"
 )
 
+var apiKey string
+
+func init() {
+	loadEnv()
+	apiKey = os.Getenv("API_KEY_EXCHANGE")
+	if err := validateApiKey(apiKey); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+}
+
 func loadEnv() {
 	file, err := os.Open(".env")
 	if err != nil {
@@ -42,12 +53,6 @@ func validateApiKey(apiKey string) error {
 func convertHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	apiKey := os.Getenv("API_KEY_EXCHANGE")
-	if err := validateApiKey(apiKey); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -115,12 +120,6 @@ func ratesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	apiKey := os.Getenv("API_KEY_EXCHANGE")
-	if err := validateApiKey(apiKey); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	query := r.URL.Query()
 	base := strings.ToUpper(query.Get("base"))
 
@@ -168,13 +167,7 @@ func ratesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	loadEnv()
 
-	apiKey := os.Getenv("API_KEY_EXCHANGE")
-	if err := validateApiKey(apiKey); err != nil {
-		fmt.Println(err)
-		return
-	}
 	http.HandleFunc("/convert", convertHandler)
 	http.HandleFunc("/rates", ratesHandler)
 
