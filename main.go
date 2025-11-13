@@ -45,8 +45,8 @@ func convertHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := r.URL.Query()
-	from := query.Get("from")
-	to := query.Get("to")
+	from := strings.ToUpper(query.Get("from"))
+	to := strings.ToUpper(query.Get("to"))
 	amountStr := query.Get("amount")
 
 	if from == "" || to == "" || amountStr == "" {
@@ -59,14 +59,9 @@ func convertHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if from != strings.ToUpper(from) || to != strings.ToUpper(to) {
-		http.Error(w, "Currency codes must be uppercase", http.StatusBadRequest)
-		return
-	}
-
-	re := regexp.MustCompile(`^[A-Za-z]+$`)
+	re := regexp.MustCompile(`^[A-Z]+$`)
 	if !re.MatchString(from) || !re.MatchString(to) {
-		http.Error(w, "Currency codes must contain only letters", http.StatusBadRequest)
+		http.Error(w, "Currency codes must contain only alphabetic letters (no number or symbols)", http.StatusBadRequest)
 		return
 	}
 
