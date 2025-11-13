@@ -9,18 +9,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var apiKey string
-
-func init() {
-	loadEnv()
-	apiKey = os.Getenv("API_KEY_EXCHANGE")
-	if err := validateApiKey(apiKey); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-}
 
 func loadEnv() {
 	file, err := os.Open(".env")
@@ -43,11 +35,37 @@ func loadEnv() {
 	}
 }
 
-func validateApiKey(apiKey string) error {
-	if apiKey == "" {
-		return fmt.Errorf("API_KEY_EXCHANGE environment variable not set")
+func checkCurrencyFormat(s string) bool {
+	re := regexp.MustCompile(`^[A-Z]+$`)
+	return !re.MatchString(s)
+}
+
+type CacheItem struct {
+	Data      interface{}
+	Timestamp int64
+}
+
+var cache = make(map[string]CacheItem)
+var cacheTime int64 = 300
+
+func getFromCache(key string) (interface{}, bool) {
+	item, ok := cache[key]
+	if !ok {
+		return nil, false
 	}
-	return nil
+
+	if time.Now().Unix()-item.Timestamp > cacheTime {
+		delete(cache, key)
+		return nil, false
+	}
+	return item.Data, true
+}
+
+func setToCache(key string, data interface{}) {
+	cache[key] = CacheItem{
+		Data:      data,
+		Timestamp: time.Now().Unix(),
+	}
 }
 
 func convertHandler(w http.ResponseWriter, r *http.Request) {
@@ -71,8 +89,7 @@ func convertHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	re := regexp.MustCompile(`^[A-Z]+$`)
-	if !re.MatchString(from) || !re.MatchString(to) {
+	if checkCurrencyFormat(from) || checkCurrencyFormat(to) {
 		http.Error(w, "Currency codes must contain only alphabetic letters (no number or symbols)", http.StatusBadRequest)
 		return
 	}
@@ -87,6 +104,14 @@ func convertHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Amount must be greater than zero", http.StatusBadRequest)
 		return
 	}
+
+	cacheKey := fmt.Sprintf("convert:%s : %s : %f", from, to, amount)
+	if cachedData, found := getFromCache(cacheKey); found {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"result": cachedData})
+		return
+	}
+	fmt.Println("Convert request: data feched from API")
 
 	url := fmt.Sprintf("https://v6.exchangerate-api.com/v6/%s/pair/%s/%s/%f", apiKey, from, to, amount)
 	res, err := http.Get(url)
@@ -104,10 +129,13 @@ func convertHandler(w http.ResponseWriter, r *http.Request) {
 	var apiResponse struct {
 		Result float64 `json:"conversion_result"`
 	}
+
 	if err = json.NewDecoder(res.Body).Decode(&apiResponse); err != nil {
 		http.Error(w, "Error parsing API response", http.StatusInternalServerError)
 		return
 	}
+
+	setToCache(cacheKey, apiResponse.Result)
 
 	response := map[string]interface{}{"result": apiResponse.Result}
 	w.Header().Set("Content-Type", "application/json")
@@ -128,11 +156,20 @@ func ratesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	re := regexp.MustCompile("^[A-Z]+$")
-	if !re.MatchString(base) {
+	if checkCurrencyFormat(base) {
 		http.Error(w, "Currency codes must contain only alphabetic letters (no number or symbols)", http.StatusBadRequest)
 		return
 	}
+
+	cacheKey := fmt.Sprintf("rates:%s", base)
+	if cachedData, found := getFromCache(cacheKey); found {
+		response := map[string]interface{}{"base": base, "rates": cachedData}
+		w.Header().Set("Content-Type", "application/json")
+		jsonData, _ := json.MarshalIndent(response, "", "  ")
+		w.Write(jsonData)
+		return
+	}
+	fmt.Println("Rates request: data feched from API")
 
 	url := fmt.Sprintf("https://v6.exchangerate-api.com/v6/%s/latest/%s", apiKey, base)
 	res, err := http.Get(url)
@@ -155,6 +192,8 @@ func ratesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	setToCache(cacheKey, apiResponse.Rates)
+
 	response := map[string]interface{}{"base": base, "rates": apiResponse.Rates}
 	w.Header().Set("Content-Type", "application/json")
 	jsonData, err := json.MarshalIndent(response, "", "  ")
@@ -167,6 +206,12 @@ func ratesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	loadEnv()
+
+	apiKey = os.Getenv("API_KEY_EXCHANGE")
+	if apiKey == "" {
+		fmt.Println("API_KEY_EXCHANGE environment variable not set")
+	}
 
 	http.HandleFunc("/convert", convertHandler)
 	http.HandleFunc("/rates", ratesHandler)
