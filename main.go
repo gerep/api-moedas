@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -35,6 +37,7 @@ func convertHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	apiKey := os.Getenv("API_KEY_EXCHANGE")
 	if apiKey == "" {
 		http.Error(w, "API key not configured", http.StatusInternalServerError)
@@ -44,28 +47,64 @@ func convertHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	from := query.Get("from")
 	to := query.Get("to")
-	amount := query.Get("amount")
+	amountStr := query.Get("amount")
 
-	url := fmt.Sprintf("https://v6.exchangerate-api.com/v6/%s/pair/%s/%s/%s", apiKey, from, to, amount)
+	if from == "" || to == "" || amountStr == "" {
+		http.Error(w, "Missing required parameters", http.StatusBadRequest)
+		return
+	}
+
+	if from == to {
+		http.Error(w, "Source and target currencies must be different", http.StatusBadRequest)
+		return
+	}
+
+	if from != strings.ToUpper(from) || to != strings.ToUpper(to) {
+		http.Error(w, "Currency codes must be uppercase", http.StatusBadRequest)
+		return
+	}
+
+	re := regexp.MustCompile(`^[A-Za-z]+$`)
+	if !re.MatchString(from) || !re.MatchString(to) {
+		http.Error(w, "Currency codes must contain only letters", http.StatusBadRequest)
+		return
+	}
+
+	amount, err := strconv.ParseFloat(amountStr, 64)
+	if err != nil {
+		http.Error(w, "Invalid amount", http.StatusBadRequest)
+		return
+	}
+
+	if amount <= 0 {
+		http.Error(w, "Amount must be greater than zero", http.StatusBadRequest)
+		return
+	}
+
+	url := fmt.Sprintf("https://v6.exchangerate-api.com/v6/%s/pair/%s/%s/%f", apiKey, from, to, amount)
 	res, err := http.Get(url)
 	if err != nil {
-		fmt.Println("Error making API request:", err)
+		fmt.Println("Error making API request:", http.StatusInternalServerError)
 		return
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
-		fmt.Println("API request failed with status:", res.Status)
+		http.Error(w, fmt.Sprintf("External API error: %s", res.Status), http.StatusInternalServerError)
 		return
 	}
-	fmt.Println("API response status:", res.Status)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(res.StatusCode)
 
-	_, err = io.Copy(w, res.Body)
-	if err != nil {
-		fmt.Println("Error copying response body:", err)
+	var apiResponse struct {
+		Result float64 `json:"conversion_result"`
 	}
+	if err = json.NewDecoder(res.Body).Decode(&apiResponse); err != nil {
+		http.Error(w, "Error parsing API response", http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{"result": apiResponse.Result}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 func main() {
